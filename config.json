@@ -1,0 +1,31 @@
+{
+    "watch_dirs": [
+        "D:\\"
+    ],
+    "exclude_dirs": [
+        "D:\\$RECYCLE.BIN",
+        "D:\\System Volume Information",
+        "D:\\venv"
+    ],
+    "exclude_patterns": [
+        "# 空行和 # 开头的内容会被忽略",
+        "*.tmp",
+        "*.log",
+        "**/__pycache__/",
+        "**/node_modules/",
+        "!D:/保留目录/*.log"
+    ],
+    "target_extensions": [
+        ".xlsx", ".xls", 
+        ".dwg", ".dxf", 
+        ".docx", ".doc", 
+        ".py", ".md", ".pdf"
+    ],
+    "db_path": "work_log.db",
+    "everything_dll_path": "Everything64.dll",
+    "database_batch_size": 100,
+    "database_flush_seconds": 0.5,
+    "debounce_seconds": 1.0,
+    "browser_poll_seconds": 1.0,
+    "browser_minimum_seconds": 3.0
+}

@@ -1,0 +1,5 @@
+psutil>=5.9
+watchdog>=4.0
+Pillow>=10.0
+pystray>=0.19
+pywin32>=306; sys_platform == "win32"
