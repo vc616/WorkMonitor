@@ -39,6 +39,7 @@ class ReportGenerator:
         page_visits: dict[tuple[str, str], list[WorkLogRecord]] = defaultdict(list)
         application_totals: dict[str, int] = defaultdict(int)
         application_visits: dict[tuple[str, str], list[WorkLogRecord]] = defaultdict(list)
+        input_by_hour: dict[int, dict[str, int]] = defaultdict(lambda: {"mouse": 0, "keyboard": 0})
 
         # All report aggregates are built in one pass over the ordered rows.
         for log in logs:
@@ -51,6 +52,12 @@ class ReportGenerator:
                 application_logs.append(log)
                 application_totals[log.file_name] += log.file_size
                 application_visits[(log.project_dir, log.file_name)].append(log)
+                continue
+            if log.action == WorkAction.MOUSE_CLICK.value:
+                input_by_hour[log.timestamp.hour]["mouse"] += log.file_size
+                continue
+            if log.action == WorkAction.KEYSTROKE.value:
+                input_by_hour[log.timestamp.hour]["keyboard"] += log.file_size
                 continue
             file_logs.append(log)
             projects[log.project_dir][log.file_name].append(log)
@@ -110,6 +117,16 @@ class ReportGenerator:
                     application_totals.items(), key=lambda item: item[1], reverse=True
                 )
             ],
+            "",
+            "## 输入活动",
+            "",
+            f"- 鼠标点击：{sum(item['mouse'] for item in input_by_hour.values())} 次",
+            f"- 键盘敲击：{sum(item['keyboard'] for item in input_by_hour.values())} 次",
+            "- 每小时统计：",
+            *[
+                f"    - {hour:02d}:00–{hour:02d}:59：鼠标 {counts['mouse']} 次，键盘 {counts['keyboard']} 次"
+                for hour, counts in sorted(input_by_hour.items())
+            ],
         ]
 
         detailed_lines = ["=" * 50, f"📅 【工作复盘日报】 日期: {day.isoformat()}", "=" * 50]
@@ -142,6 +159,13 @@ class ReportGenerator:
                         f"     └── 累计时长: {total // 60}分钟 {total % 60}秒",
                     ]
                 )
+
+        if input_by_hour:
+            detailed_lines.extend(["", "⌨ 输入活动（按小时）", "-" * 40])
+            detailed_lines.extend(
+                f"  {hour:02d}:00–{hour:02d}:59 | 鼠标点击 {counts['mouse']} 次 | 键盘敲击 {counts['keyboard']} 次"
+                for hour, counts in sorted(input_by_hour.items())
+            )
 
         for project, files in projects.items():
             detailed_lines.extend(["", f"📂 项目/目录: 【{project}】", "-" * 40])

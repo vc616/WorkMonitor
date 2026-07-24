@@ -43,6 +43,7 @@ class AppConfig:
     database_flush_seconds: float = 0.5
     tracked_apps: tuple[tuple[str, str], ...] = tuple(DEFAULT_TRACKED_APPS.items())
     application_minimum_seconds: float = 3.0
+    input_activity_enabled: bool = True
 
 
 def _resolve_path(value: str, app_dir: Path) -> Path:
@@ -50,16 +51,43 @@ def _resolve_path(value: str, app_dir: Path) -> Path:
     return path if path.is_absolute() else app_dir / path
 
 
-def load_config(path: Path | None = None) -> AppConfig:
-    app_dir = get_app_dir()
-    config_path = path or app_dir / "config.json"
+def read_config_data(path: Path | None = None) -> tuple[Path, dict[str, Any]]:
+    config_path = path or get_app_dir() / "config.json"
     try:
         with config_path.open("r", encoding="utf-8") as file:
-            raw: dict[str, Any] = json.load(file)
+            data = json.load(file)
     except FileNotFoundError as exc:
         raise ConfigError(f"配置文件不存在: {config_path}") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"无法读取配置文件 {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError("配置文件根节点必须是对象")
+    return config_path, data
+
+
+def save_config_updates(updates: dict[str, Any], path: Path | None = None) -> AppConfig:
+    config_path, data = read_config_data(path)
+    data.update(updates)
+    temporary_path = config_path.with_suffix(config_path.suffix + ".tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=4) + "\n",
+            encoding="utf-8",
+        )
+        validated = load_config(temporary_path)
+        temporary_path.replace(config_path)
+        return validated
+    except Exception:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    app_dir = get_app_dir()
+    _, raw = read_config_data(path or app_dir / "config.json")
 
     required = ("watch_dirs", "target_extensions", "db_path")
     missing = [key for key in required if key not in raw]
@@ -91,6 +119,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         for process, name in tracked_raw.items()
         if str(process).strip() and str(name).strip()
     )
+    input_activity_enabled = raw.get("input_activity_enabled", True)
+    if not isinstance(input_activity_enabled, bool):
+        raise ConfigError("input_activity_enabled 必须是布尔值")
 
     return AppConfig(
         app_dir=app_dir,
@@ -106,4 +137,5 @@ def load_config(path: Path | None = None) -> AppConfig:
         database_flush_seconds=flush_seconds,
         tracked_apps=tracked_apps,
         application_minimum_seconds=application_minimum_seconds,
+        input_activity_enabled=input_activity_enabled,
     )

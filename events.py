@@ -18,6 +18,8 @@ class WorkAction(StrEnum):
     DELETE_FILE = "删除文件"
     BROWSE_PAGE = "浏览网页"
     USE_APPLICATION = "使用应用"
+    MOUSE_CLICK = "鼠标点击"
+    KEYSTROKE = "键盘敲击"
 
 
 MODIFIED_ACTIONS = frozenset(

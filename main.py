@@ -10,6 +10,7 @@ from config import AppConfig, load_config
 from database import DatabaseWriter
 from event_processor import EventProcessor
 from gui import MonitorGui
+from input_activity import InputActivityMonitor
 from models import FileEvent, GeneratedReports, LogEvent
 from report import ReportGenerator
 from utils import configure_logging
@@ -36,6 +37,7 @@ class MonitorApplication:
             application_minimum_seconds=config.application_minimum_seconds,
         )
         self._filesystem = FileSystemMonitor(self._file_queue, config.watch_dirs)
+        self._input_activity = InputActivityMonitor(self._submit_log)
         self._reporter = ReportGenerator(self._database.fetch_day)
         self._shutdown_lock = threading.Lock()
         self._started = False
@@ -48,6 +50,8 @@ class MonitorApplication:
             self._processor.start()
             self._filesystem.start()
             self._browser.start()
+            if config.input_activity_enabled:
+                self._input_activity.start()
         except BaseException:
             LOGGER.exception("监控启动失败，正在清理")
             self.shutdown()
@@ -56,6 +60,7 @@ class MonitorApplication:
         LOGGER.info("工作监控 V2 已启动")
 
     def generate_report(self, day: date) -> GeneratedReports | None:
+        self._input_activity.snapshot()
         return self._reporter.generate(day)
 
     def available_days(self, year: int, month: int) -> set[date]:
@@ -67,6 +72,7 @@ class MonitorApplication:
                 return
             LOGGER.info("正在停止工作监控")
             self._filesystem.stop()
+            self._input_activity.stop()
             self._browser.stop()
             if self._processor.is_alive():
                 self._processor.stop()
@@ -90,6 +96,7 @@ def run_app() -> None:
             application.generate_report,
             application.shutdown,
             application.available_days,
+            config.app_dir / "config.json",
         )
         gui.run()
     except KeyboardInterrupt:

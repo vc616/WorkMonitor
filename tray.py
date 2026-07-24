@@ -23,7 +23,7 @@ class TrayController:
         self._exit_app = exit_app
         self._icon = None
 
-    def start(self) -> None:
+    def start(self) -> bool:
         try:
             import pystray
 
@@ -36,9 +36,18 @@ class TrayController:
                     pystray.MenuItem("退出程序", lambda *_: self._exit_app()),
                 ),
             )
-            threading.Thread(target=self._icon.run, name="tray", daemon=True).start()
+            threading.Thread(target=self._run_icon, name="tray", daemon=True).start()
+            return True
         except Exception:
             LOGGER.exception("系统托盘启动失败，程序仍可通过窗口运行")
+            return False
+
+    def _run_icon(self) -> None:
+        try:
+            self._icon.run()
+        except Exception:
+            LOGGER.exception("系统托盘运行失败，正在显示主窗口")
+            self._show_window()
 
     def stop(self) -> None:
         if self._icon is not None:
