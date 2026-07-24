@@ -50,7 +50,7 @@ class MonitorApplication:
             self._processor.start()
             self._filesystem.start()
             self._browser.start()
-            if config.input_activity_enabled:
+            if self.config.input_activity_enabled:
                 self._input_activity.start()
         except BaseException:
             LOGGER.exception("监控启动失败，正在清理")
