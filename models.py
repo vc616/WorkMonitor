@@ -13,6 +13,7 @@ class FileEvent:
     path: Path
     occurred_at: datetime
     destination: Path | None = None
+    is_directory: bool = False
 
 
 @dataclass(frozen=True, slots=True)

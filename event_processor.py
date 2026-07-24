@@ -60,6 +60,9 @@ class EventProcessor(threading.Thread):
         self._snapshots: dict[str, tuple[int, int]] = {}
         self._pending_close: dict[str, datetime] = {}
         self._paths: dict[str, Path] = {}
+        self._pending_destructive_events: list[FileEvent] = []
+        self._directory_operations: list[FileEvent] = []
+        self._last_destructive_activity: float | None = None
         self._exclude_dirs = tuple(self._key(path) for path in config.exclude_dirs)
         self._watch_dirs = tuple(self._key(path) for path in config.watch_dirs)
 
@@ -75,6 +78,7 @@ class EventProcessor(threading.Thread):
             try:
                 event = self._event_queue.get(timeout=0.2)
             except queue.Empty:
+                self._flush_pending_destructive_events()
                 self._flush_expired_closes(datetime.now())
                 continue
             try:
@@ -83,14 +87,21 @@ class EventProcessor(threading.Thread):
                 LOGGER.exception("处理文件事件失败: %s %s", event.event_type, event.path)
             finally:
                 self._event_queue.task_done()
+            self._flush_pending_destructive_events()
             self._flush_expired_closes(datetime.now())
 
+        self._flush_pending_destructive_events(force=True)
         self._flush_expired_closes(datetime.max)
         LOGGER.info("文件事件处理器已停止")
 
     def _process(self, event: FileEvent) -> None:
+        if event.is_directory:
+            self._handle_directory_event(event)
+            return
+        if self._is_covered_by_directory_operation(event):
+            return
         if event.event_type is FileEventType.MOVED:
-            self._handle_moved(event)
+            self._defer_destructive_event(event)
             return
         if self._is_excluded(event.path):
             return
@@ -107,7 +118,134 @@ class EventProcessor(threading.Thread):
         elif event.event_type is FileEventType.CREATED:
             self._emit(WorkAction.CREATE_FILE, event.path, self._file_size(event.path), event.occurred_at)
         elif event.event_type is FileEventType.DELETED:
-            self._handle_deleted(event)
+            self._defer_destructive_event(event)
+
+    def _defer_destructive_event(self, event: FileEvent) -> None:
+        self._pending_destructive_events.append(event)
+        self._last_destructive_activity = time.monotonic()
+
+    def _flush_pending_destructive_events(self, force: bool = False) -> None:
+        if self._last_destructive_activity is None:
+            return
+        if (
+            not force
+            and time.monotonic() - self._last_destructive_activity
+            <= self._config.debounce_seconds
+        ):
+            return
+
+        operations = self._top_level_directory_operations()
+        pending = [
+            event
+            for event in self._pending_destructive_events
+            if not any(
+                self._event_is_inside_directory_operation(event, operation)
+                for operation in operations
+            )
+        ]
+        self._pending_destructive_events = []
+        for event in pending:
+            if event.event_type is FileEventType.MOVED:
+                self._handle_moved(event)
+            else:
+                self._handle_deleted(event)
+        for operation in operations:
+            self._emit_directory_operation(operation)
+        self._directory_operations.clear()
+        self._last_destructive_activity = None
+
+    def _handle_directory_event(self, event: FileEvent) -> None:
+        if event.event_type not in {FileEventType.DELETED, FileEventType.MOVED}:
+            return
+        destination = event.destination
+        if self._is_excluded(event.path):
+            return
+        if (
+            event.event_type is FileEventType.MOVED
+            and destination is not None
+            and self._is_recycle_bin(destination)
+        ):
+            event = FileEvent(
+                FileEventType.DELETED,
+                event.path,
+                event.occurred_at,
+                is_directory=True,
+            )
+            destination = None
+        elif destination is not None and self._is_excluded(destination):
+            return
+
+        self._directory_operations.append(event)
+        self._last_destructive_activity = time.monotonic()
+        self._clear_directory_state(event.path)
+        if destination is not None:
+            self._clear_directory_state(destination)
+
+    def _top_level_directory_operations(self) -> list[FileEvent]:
+        indexed = sorted(
+            enumerate(self._directory_operations),
+            key=lambda item: len(Path(self._key(item[1].path)).parts),
+        )
+        roots: dict[FileEventType, set[str]] = {
+            FileEventType.DELETED: set(),
+            FileEventType.MOVED: set(),
+        }
+        selected: list[tuple[int, FileEvent]] = []
+        for index, operation in indexed:
+            key = self._key(operation.path)
+            event_roots = roots[operation.event_type]
+            if key in event_roots or any(
+                key.startswith(root + os.sep) for root in event_roots
+            ):
+                continue
+            event_roots.add(key)
+            selected.append((index, operation))
+        return [operation for _, operation in sorted(selected)]
+
+    def _emit_directory_operation(self, event: FileEvent) -> None:
+        destination = event.destination
+        if event.event_type is FileEventType.DELETED:
+            key = self._key(event.path)
+            if not self._is_duplicate(key, WorkAction.DELETE_FOLDER.value, event.occurred_at):
+                self._emit(WorkAction.DELETE_FOLDER, event.path, 0, event.occurred_at)
+            return
+        if destination is None:
+            return
+        key = f"{self._key(event.path)}->{self._key(destination)}"
+        if not self._is_duplicate(key, WorkAction.MOVE_FOLDER.value, event.occurred_at):
+            self._emit_directory_move(event.path, destination, event.occurred_at)
+
+    def _is_covered_by_directory_operation(self, event: FileEvent) -> bool:
+        return any(
+            self._event_is_inside_directory_operation(event, operation)
+            for operation in self._directory_operations
+        )
+
+    def _event_is_inside_directory_operation(
+        self,
+        event: FileEvent,
+        operation: FileEvent,
+    ) -> bool:
+        roots = [operation.path]
+        if operation.destination is not None:
+            roots.append(operation.destination)
+        paths = [event.path]
+        if event.destination is not None:
+            paths.append(event.destination)
+        return any(self._is_descendant(path, root) for path in paths for root in roots)
+
+    def _clear_directory_state(self, directory: Path) -> None:
+        root = self._key(directory)
+        for mapping in (
+            self._file_states,
+            self._debounce,
+            self._snapshots,
+            self._pending_close,
+            self._paths,
+        ):
+            for key in tuple(mapping):
+                if key.startswith(root + os.sep):
+                    mapping.pop(key, None)
 
     def _handle_lock_event(self, event: FileEvent) -> None:
         real_path = self._real_path_from_lock(event.path)
@@ -169,7 +307,7 @@ class EventProcessor(threading.Thread):
 
     def _handle_moved(self, event: FileEvent) -> None:
         destination = event.destination
-        if destination is None or self._is_excluded(event.path) or self._is_excluded(destination):
+        if destination is None or self._is_excluded(event.path):
             return
         old_name = event.path.name.lower()
         new_name = destination.name.lower()
@@ -177,12 +315,37 @@ class EventProcessor(threading.Thread):
             return
         if old_name.startswith("~") or new_name.startswith("~"):
             return
+        if self._is_recycle_bin(destination):
+            if self._is_target(event.path):
+                self._handle_deleted(
+                    FileEvent(FileEventType.DELETED, event.path, event.occurred_at)
+                )
+            return
+        if self._is_excluded(destination):
+            return
         if self._is_target(event.path) and self._is_target(destination):
             LOGGER.info("重命名文件 | %s -> %s", event.path.name, destination.name)
             self._handle_deleted(
                 FileEvent(FileEventType.DELETED, event.path, event.occurred_at)
             )
             self._process(FileEvent(FileEventType.CREATED, destination, event.occurred_at))
+
+    def _emit_directory_move(
+        self,
+        source: Path,
+        destination: Path,
+        timestamp: datetime,
+    ) -> None:
+        event = LogEvent(
+            timestamp=timestamp,
+            action=WorkAction.MOVE_FOLDER.value,
+            file_name=f"{source.name} -> {destination.name}",
+            file_path=f"{source} -> {destination}",
+            file_size=0,
+            project_dir=destination.parent.name,
+        )
+        self._submit_log(event)
+        LOGGER.info("日志 | %s | %s -> %s", event.action, source, destination)
 
     def _flush_expired_closes(self, now: datetime) -> None:
         expired = [
@@ -318,3 +481,11 @@ class EventProcessor(threading.Thread):
     @staticmethod
     def _key(path: Path) -> str:
         return os.path.normcase(os.path.abspath(path))
+
+    @classmethod
+    def _is_descendant(cls, path: Path, directory: Path) -> bool:
+        return cls._key(path).startswith(cls._key(directory) + os.sep)
+
+    @staticmethod
+    def _is_recycle_bin(path: Path) -> bool:
+        return any(part.casefold() == "$recycle.bin" for part in path.parts)

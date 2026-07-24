@@ -25,7 +25,9 @@ htmlcov/
 
 # Packaging and build output
 build/
+build_resources/
 dist/
+smoke_test/
 site/
 .eggs/
 *.egg

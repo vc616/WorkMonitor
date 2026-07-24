@@ -11,6 +11,12 @@ def get_app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def get_resource_path(*parts: str) -> Path:
+    """Return a bundled resource path in source and PyInstaller builds."""
+    bundle_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return bundle_dir.joinpath(*parts)
+
+
 def configure_logging(verbose: bool = False) -> None:
     log_dir = get_app_dir() / "LogFile"
     log_dir.mkdir(exist_ok=True)

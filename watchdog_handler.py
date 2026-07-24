@@ -39,22 +39,26 @@ class QueueingEventHandler(FileSystemEventHandler):
         self._enqueue(FileEventType.DELETED, event)
 
     def on_moved(self, event: FileSystemMovedEvent) -> None:
-        if event.is_directory:
-            return
         self._event_queue.put_nowait(
             FileEvent(
                 event_type=FileEventType.MOVED,
                 path=Path(event.src_path),
                 destination=Path(event.dest_path),
                 occurred_at=datetime.now(),
+                is_directory=event.is_directory,
             )
         )
 
     def _enqueue(self, event_type: FileEventType, event: FileSystemEvent) -> None:
-        if event.is_directory:
+        if event.is_directory and event_type is not FileEventType.DELETED:
             return
         self._event_queue.put_nowait(
-            FileEvent(event_type=event_type, path=Path(event.src_path), occurred_at=datetime.now())
+            FileEvent(
+                event_type=event_type,
+                path=Path(event.src_path),
+                occurred_at=datetime.now(),
+                is_directory=event.is_directory,
+            )
         )
 
 

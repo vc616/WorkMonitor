@@ -4,16 +4,25 @@ import logging
 import threading
 from collections.abc import Callable
 
+from utils import get_resource_path
+
 LOGGER = logging.getLogger(__name__)
 
 
 def create_tray_icon():
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGB", (64, 64), "white")
+    icon_path = get_resource_path("assets", "work_monitor.ico")
+    if icon_path.is_file():
+        with Image.open(icon_path) as icon:
+            return icon.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+
+    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((8, 8, 56, 56), fill="steelblue")
-    draw.text((22, 21), "M", fill="white")
+    draw.rounded_rectangle((4, 4, 60, 60), radius=13, fill="#167663")
+    draw.ellipse((14, 14, 50, 50), outline="white", width=4)
+    draw.line((32, 32, 32, 21), fill="white", width=4)
+    draw.line((32, 32, 42, 37), fill="white", width=4)
     return image
 
 

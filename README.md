@@ -7,6 +7,7 @@ WorkMonitor V2 是一个面向 Windows 的本地工作活动记录工具。它�
 ## 功能
 
 - 监控指定目录中的文件创建、删除、打开、关闭和保存事件
+- 删除或移动文件夹时折叠其子文件事件，只保留一条文件夹操作记录
 - 识别 AutoCAD、Office、WPS 等软件产生的锁文件和临时文件
 - 统计浏览器页面标题及前台停留时间
 - 统计微信、企业微信、钉钉、飞书、QQ、Teams 等应用的前台时长
@@ -41,6 +42,23 @@ py -m venv venv
 程序启动后默认不显示主窗口，只在系统托盘保留图标。通过托盘菜单可以打开窗口或退出程序。
 
 `monitor_daemon.py` 是旧入口的兼容启动器，现有快捷方式仍可继续使用。
+
+### 使用 EXE
+
+直接运行 `WorkMonitorV2.exe`。程序会静默启动并显示系统托盘图标；首次运行时，会在 EXE 同目录释放可编辑的 `config.json`。后续启动始终读取该文件，升级或替换 EXE 不会覆盖已有配置。
+
+建议将 EXE 放在当前用户有写入权限的独立目录中，因为配置、数据库和 `LogFile` 都保存在程序目录。
+
+### 构建 EXE
+
+项目使用 PyInstaller 生成 Windows 单文件、无控制台窗口的 EXE：
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\build.ps1
+```
+
+构建结果为 `dist\WorkMonitorV2.exe`。`assets\default_config.json` 和程序图标会打包进 EXE 内部，不需要随 EXE 单独分发。
 
 ## 使用界面
 

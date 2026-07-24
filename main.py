@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import sys
 import threading
 from datetime import date
 
@@ -107,4 +108,10 @@ def run_app() -> None:
 
 
 if __name__ == "__main__":
-    run_app()
+    try:
+        run_app()
+    except BaseException:
+        LOGGER.exception("应用启动失败")
+        logging.shutdown()
+        if not getattr(sys, "frozen", False):
+            raise

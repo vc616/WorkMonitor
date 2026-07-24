@@ -14,6 +14,7 @@ from models import GeneratedReports
 from report import write_reports
 from startup import is_startup_enabled, set_startup_enabled
 from tray import TrayController
+from utils import get_resource_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +92,10 @@ class MonitorGui:
         self._display_month = date(today.year, today.month, 1)
 
         self.root = tk.Tk()
+        try:
+            self.root.iconbitmap(default=str(get_resource_path("assets", "work_monitor.ico")))
+        except tk.TclError:
+            LOGGER.debug("无法加载窗口图标", exc_info=True)
         self._startup_var = tk.BooleanVar(master=self.root, value=False)
         self._input_activity_var = tk.BooleanVar(master=self.root, value=True)
         self.root.title("工作监控 · 日报中心")

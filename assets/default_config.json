@@ -1,0 +1,48 @@
+{
+    "watch_dirs": [
+        "D:\\"
+    ],
+    "exclude_dirs": [
+        "D:\\$RECYCLE.BIN",
+        "D:\\System Volume Information",
+        "D:\\venv"
+    ],
+    "exclude_patterns": [
+        "# 空行和 # 开头的内容会被忽略",
+        "*.tmp",
+        "*.log",
+        "**/__pycache__/",
+        "**/node_modules/",
+        "!D:/保留目录/*.log"
+    ],
+    "target_extensions": [
+        ".xlsx", ".xls",
+        ".dwg", ".dxf",
+        ".docx", ".doc",
+        ".py", ".md", ".pdf"
+    ],
+    "db_path": "work_log.db",
+    "everything_dll_path": "Everything64.dll",
+    "database_batch_size": 100,
+    "database_flush_seconds": 0.5,
+    "debounce_seconds": 1.0,
+    "browser_poll_seconds": 1.0,
+    "browser_minimum_seconds": 3.0,
+    "application_minimum_seconds": 3.0,
+    "input_activity_enabled": true,
+    "tracked_apps": {
+        "WeChat.exe": "微信",
+        "Weixin.exe": "微信",
+        "WXWork.exe": "企业微信",
+        "WeCom.exe": "企业微信",
+        "DingTalk.exe": "钉钉",
+        "Feishu.exe": "飞书",
+        "Lark.exe": "飞书",
+        "QQ.exe": "QQ",
+        "TIM.exe": "TIM",
+        "Teams.exe": "Microsoft Teams",
+        "ms-teams.exe": "Microsoft Teams",
+        "Slack.exe": "Slack",
+        "Telegram.exe": "Telegram"
+    }
+}

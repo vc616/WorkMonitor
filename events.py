@@ -16,6 +16,8 @@ class WorkAction(StrEnum):
     SAVE_FILE = "修改后保存"
     CREATE_FILE = "新建文件"
     DELETE_FILE = "删除文件"
+    DELETE_FOLDER = "删除文件夹"
+    MOVE_FOLDER = "移动文件夹"
     BROWSE_PAGE = "浏览网页"
     USE_APPLICATION = "使用应用"
     MOUSE_CLICK = "鼠标点击"

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from utils import get_app_dir
+from utils import get_app_dir, get_resource_path
 
 DEFAULT_TRACKED_APPS = {
     "wechat.exe": "微信",
@@ -46,13 +46,37 @@ class AppConfig:
     input_activity_enabled: bool = True
 
 
+def ensure_user_config(
+    path: Path | None = None,
+    template_path: Path | None = None,
+) -> Path:
+    """Create the editable config beside the executable on first launch."""
+    config_path = path or get_app_dir() / "config.json"
+    if config_path.exists():
+        return config_path
+
+    source_path = template_path or get_resource_path("assets", "default_config.json")
+    if not source_path.is_file():
+        raise ConfigError(f"内置默认配置不存在: {source_path}")
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = config_path.with_suffix(config_path.suffix + ".tmp")
+    try:
+        temporary_path.write_bytes(source_path.read_bytes())
+        temporary_path.replace(config_path)
+    except OSError as exc:
+        temporary_path.unlink(missing_ok=True)
+        raise ConfigError(f"无法在程序目录初始化配置文件 {config_path}: {exc}") from exc
+    return config_path
+
+
 def _resolve_path(value: str, app_dir: Path) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else app_dir / path
 
 
 def read_config_data(path: Path | None = None) -> tuple[Path, dict[str, Any]]:
-    config_path = path or get_app_dir() / "config.json"
+    config_path = path if path is not None else ensure_user_config()
     try:
         with config_path.open("r", encoding="utf-8") as file:
             data = json.load(file)
@@ -87,7 +111,7 @@ def save_config_updates(updates: dict[str, Any], path: Path | None = None) -> Ap
 
 def load_config(path: Path | None = None) -> AppConfig:
     app_dir = get_app_dir()
-    _, raw = read_config_data(path or app_dir / "config.json")
+    _, raw = read_config_data(path)
 
     required = ("watch_dirs", "target_extensions", "db_path")
     missing = [key for key in required if key not in raw]
