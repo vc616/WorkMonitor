@@ -75,7 +75,12 @@ DatabaseCommand = LogEvent | _QueryRequest | _MonthDaysRequest | _StopRequest
 class DatabaseWriter(threading.Thread):
     """Owns the application's only SQLite connection."""
 
-    def __init__(self, db_path: Path, batch_size: int = 100, flush_seconds: float = 0.5):
+    def __init__(
+        self,
+        db_path: Path,
+        batch_size: int = 100,
+        flush_seconds: float = 0.5,
+    ):
         super().__init__(name="sqlite-writer", daemon=True)
         self._db_path = db_path
         self._batch_size = batch_size

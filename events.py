@@ -17,6 +17,7 @@ class WorkAction(StrEnum):
     CREATE_FILE = "新建文件"
     DELETE_FILE = "删除文件"
     BROWSE_PAGE = "浏览网页"
+    USE_APPLICATION = "使用应用"
 
 
 MODIFIED_ACTIONS = frozenset(

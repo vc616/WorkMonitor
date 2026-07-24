@@ -32,6 +32,8 @@ class MonitorApplication:
             self._submit_log,
             poll_seconds=config.browser_poll_seconds,
             minimum_seconds=config.browser_minimum_seconds,
+            tracked_apps=dict(config.tracked_apps),
+            application_minimum_seconds=config.application_minimum_seconds,
         )
         self._filesystem = FileSystemMonitor(self._file_queue, config.watch_dirs)
         self._reporter = ReportGenerator(self._database.fetch_day)
@@ -84,7 +86,7 @@ def run_app() -> None:
     application.start()
     try:
         gui = MonitorGui(
-            config.app_dir,
+            config.app_dir / "LogFile",
             application.generate_report,
             application.shutdown,
             application.available_days,

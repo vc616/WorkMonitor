@@ -31,11 +31,14 @@ class ReportGenerator:
 
         file_logs: list[WorkLogRecord] = []
         browser_logs: list[WorkLogRecord] = []
+        application_logs: list[WorkLogRecord] = []
         modified_files: set[str] = set()
         category_files: dict[str, set[str]] = {name: set() for name in CATEGORIES}
         projects: dict[str, dict[str, list[WorkLogRecord]]] = defaultdict(lambda: defaultdict(list))
         page_totals: dict[str, int] = defaultdict(int)
         page_visits: dict[tuple[str, str], list[WorkLogRecord]] = defaultdict(list)
+        application_totals: dict[str, int] = defaultdict(int)
+        application_visits: dict[tuple[str, str], list[WorkLogRecord]] = defaultdict(list)
 
         # All report aggregates are built in one pass over the ordered rows.
         for log in logs:
@@ -43,6 +46,11 @@ class ReportGenerator:
                 browser_logs.append(log)
                 page_totals[log.file_name] += log.file_size
                 page_visits[(log.project_dir, log.file_name)].append(log)
+                continue
+            if log.action == WorkAction.USE_APPLICATION.value:
+                application_logs.append(log)
+                application_totals[log.file_name] += log.file_size
+                application_visits[(log.project_dir, log.file_name)].append(log)
                 continue
             file_logs.append(log)
             projects[log.project_dir][log.file_name].append(log)
@@ -58,6 +66,9 @@ class ReportGenerator:
         work_hours, work_minutes, work_seconds = format_duration(int((last - first).total_seconds()))
         browser_hours, browser_minutes, browser_seconds = format_duration(
             sum(log.file_size for log in browser_logs)
+        )
+        application_hours, application_minutes, application_seconds = format_duration(
+            sum(log.file_size for log in application_logs)
         )
 
         summary_lines = [
@@ -87,6 +98,18 @@ class ReportGenerator:
                 f"    - {title}（{duration} 秒）"
                 for title, duration in sorted(page_totals.items(), key=lambda item: item[1], reverse=True)[:10]
             ],
+            "",
+            "## 应用使用",
+            "",
+            f"- 前台记录：{len(application_logs)} 条",
+            f"- 累计时长：{application_hours} 小时 {application_minutes} 分钟 {application_seconds} 秒",
+            "- 应用时长（按累计时间排序）：",
+            *[
+                f"    - {application_name}（{duration // 60} 分钟 {duration % 60} 秒）"
+                for application_name, duration in sorted(
+                    application_totals.items(), key=lambda item: item[1], reverse=True
+                )
+            ],
         ]
 
         detailed_lines = ["=" * 50, f"📅 【工作复盘日报】 日期: {day.isoformat()}", "=" * 50]
@@ -101,6 +124,21 @@ class ReportGenerator:
                         f"     ├── 首次浏览: {visits[0].timestamp:%H:%M:%S}",
                         f"     ├── 最后浏览: {visits[-1].timestamp:%H:%M:%S}",
                         f"     ├── 浏览次数: {len(visits)} 次",
+                        f"     └── 累计时长: {total // 60}分钟 {total % 60}秒",
+                    ]
+                )
+
+        if application_logs:
+            detailed_lines.extend(["", "💻 常用应用前台记录", "-" * 40])
+            for (process_name, application_name), visits in application_visits.items():
+                total = sum(item.file_size for item in visits)
+                detailed_lines.extend(
+                    [
+                        f"  ◼ {application_name}",
+                        f"     ├── 进程: {process_name}",
+                        f"     ├── 首次记录: {visits[0].timestamp:%H:%M:%S}",
+                        f"     ├── 最后记录: {visits[-1].timestamp:%H:%M:%S}",
+                        f"     ├── 前台次数: {len(visits)} 次",
                         f"     └── 累计时长: {total // 60}分钟 {total % 60}秒",
                     ]
                 )
@@ -124,6 +162,7 @@ class ReportGenerator:
 
 
 def write_reports(output_dir: Path, day: date, reports: GeneratedReports) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / f"{day.isoformat()}.md"
     detailed_path = output_dir / f"{day.isoformat()}_详细.md"
     summary_path.write_text(reports.summary, encoding="utf-8")

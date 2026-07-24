@@ -1,5 +1,20 @@
+# Python
 __pycache__/
 *.py[cod]
+*.pyc
 *.db-shm
 *.db-wal
 .pytest_cache/
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+LogFile/
+*.log
