@@ -8,13 +8,13 @@ __pycache__/
 venv/
 env/
 .venv/
-
+work_log.db
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
+venv/
 # Project specific
 LogFile/
 *.log
