@@ -1,20 +1,63 @@
-# Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
-*.pyc
-*.db-shm
-*.db-wal
-.pytest_cache/
+*$py.class
+
+# Virtual environments
+.venv/
 venv/
 env/
-.venv/
-work_log.db
-# IDE
+ENV/
+__pypackages__/
+
+# Tests, coverage, linting, and type checking
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Packaging and build output
+build/
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+wheels/
+pip-wheel-metadata/
+
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-venv/
-# Project specific
-LogFile/
+*~
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# WorkMonitor runtime data
+/LogFile/
+/work_log.db
+/work_log.db-*
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
 *.log
+/config.json.tmp
