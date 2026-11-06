@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -184,7 +185,12 @@ class PageTracker(SessionTracker):
     @staticmethod
     def _is_new_tab(title: str) -> bool:
         normalized = " ".join(title.split()).lower()
-        return normalized in NEW_TAB_TITLES
+        if normalized in NEW_TAB_TITLES:
+            return True
+        # Browsers append their product name to the window title, e.g.
+        # "新标签页 - Google Chrome" or "New Tab - Microsoft Edge".
+        head = re.split(r"\s+[-–—|]\s+", normalized, maxsplit=1)[0].strip()
+        return head in NEW_TAB_TITLES
 
 
 class ApplicationTracker(SessionTracker):

@@ -91,6 +91,31 @@ class TimeAttributionTests(unittest.TestCase):
         self.assertEqual(date(2026, 1, 2), last.timestamp.date())  # type: ignore[union-attr]
 
 
+class BrowserTitleTests(unittest.TestCase):
+    def test_new_tab_with_browser_suffix_is_ignored(self) -> None:
+        moment = datetime(2026, 1, 1, 9, 0)
+        for title in (
+            "新标签页 - Google Chrome",
+            "新建标签页 - Microsoft Edge",
+            "New Tab - Google Chrome",
+            "新分頁 - Google Chrome",
+            "about:blank - Google Chrome",
+        ):
+            with self.subTest(title=title):
+                tracker = PageTracker(minimum_seconds=0)
+                tracker.update("chrome.exe", title, 0.0, moment)
+                self.assertIsNone(tracker.flush(5.0, moment))
+
+    def test_real_page_mentioning_new_tab_is_still_recorded(self) -> None:
+        tracker = PageTracker(minimum_seconds=0)
+        moment = datetime(2026, 1, 1, 9, 0)
+        tracker.update("chrome.exe", "How to open a new tab - Google Chrome", 0.0, moment)
+        event = tracker.flush(5.0, moment)
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertIn("How to open a new tab", event.file_name)
+
+
 class ReportAggregationTests(unittest.TestCase):
     def test_folder_operations_are_not_counted_as_file_operations(self) -> None:
         moment = datetime(2026, 1, 1, 9, 0)
