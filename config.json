@@ -22,8 +22,8 @@
         ".py", ".md", ".pdf"
     ],
     "db_path": "work_log.db",
-    "everything_dll_path": "Everything64.dll",
     "database_batch_size": 100,
+    "queue_max_size": 10000,
     "database_flush_seconds": 0.5,
     "debounce_seconds": 1.0,
     "browser_poll_seconds": 1.0,
@@ -44,5 +44,12 @@
         "ms-teams.exe": "Microsoft Teams",
         "Slack.exe": "Slack",
         "Telegram.exe": "Telegram"
-    }
+    },
+    "known_editors": [
+        "acad.exe", "acadlt.exe", "excel.exe", "winword.exe", "powerpnt.exe",
+        "wps.exe", "et.exe", "wpp.exe", "acrord32.exe", "foxitpdfeditor.exe",
+        "code.exe", "cursor.exe", "pycharm64.exe", "idea64.exe", "devenv.exe",
+        "notepad++.exe", "notepad.exe", "sublime_text.exe", "gvim.exe",
+        "typora.exe", "wordpad.exe"
+    ]
 }

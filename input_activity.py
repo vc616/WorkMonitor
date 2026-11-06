@@ -18,6 +18,8 @@ class HourBucket:
     first_event: datetime
     mouse_clicks: int = 0
     keystrokes: int = 0
+    submitted_mouse: int = 0
+    submitted_keyboard: int = 0
 
 
 class InputActivityCounter:
@@ -33,11 +35,29 @@ class InputActivityCounter:
         self._record("keyboard", occurred_at or datetime.now())
 
     def flush(self) -> None:
+        """Close the current bucket (used on shutdown)."""
         with self._lock:
             bucket = self._bucket
             self._bucket = None
         if bucket is not None:
             self._emit(bucket)
+
+    def snapshot(self) -> None:
+        """Submit only the counts added since the last snapshot, keeping the bucket.
+
+        Generating a report must not split the current hour into several rows
+        and must not make the report non-idempotent.
+        """
+        with self._lock:
+            bucket = self._bucket
+            if bucket is None:
+                return
+            mouse = bucket.mouse_clicks - bucket.submitted_mouse
+            keyboard = bucket.keystrokes - bucket.submitted_keyboard
+            bucket.submitted_mouse = bucket.mouse_clicks
+            bucket.submitted_keyboard = bucket.keystrokes
+            first_event = bucket.first_event
+        self._emit_counts(first_event, mouse, keyboard)
 
     def _record(self, activity: str, occurred_at: datetime) -> None:
         hour_start = occurred_at.replace(minute=0, second=0, microsecond=0)
@@ -56,15 +76,22 @@ class InputActivityCounter:
             self._emit(completed)
 
     def _emit(self, bucket: HourBucket) -> None:
+        mouse = bucket.mouse_clicks - bucket.submitted_mouse
+        keyboard = bucket.keystrokes - bucket.submitted_keyboard
+        bucket.submitted_mouse = bucket.mouse_clicks
+        bucket.submitted_keyboard = bucket.keystrokes
+        self._emit_counts(bucket.first_event, mouse, keyboard)
+
+    def _emit_counts(self, timestamp: datetime, mouse: int, keyboard: int) -> None:
         for action, label, count in (
-            (WorkAction.MOUSE_CLICK.value, "鼠标点击", bucket.mouse_clicks),
-            (WorkAction.KEYSTROKE.value, "键盘敲击", bucket.keystrokes),
+            (WorkAction.MOUSE_CLICK.value, "鼠标点击", mouse),
+            (WorkAction.KEYSTROKE.value, "键盘敲击", keyboard),
         ):
-            if count == 0:
+            if count <= 0:
                 continue
             self._submit_log(
                 LogEvent(
-                    timestamp=bucket.first_event,
+                    timestamp=timestamp,
                     action=action,
                     file_name=label,
                     file_path="",
@@ -99,7 +126,7 @@ class InputActivityMonitor:
 
     def snapshot(self) -> None:
         if self._started:
-            self._counter.flush()
+            self._counter.snapshot()
 
     def stop(self) -> None:
         for listener in (self._keyboard_listener, self._mouse_listener):

@@ -14,7 +14,7 @@ from database import DatabaseWriter
 from event_processor import EventProcessor
 from events import FileEventType, WorkAction
 from config import AppConfig, ensure_user_config, load_config, save_config_updates
-from gui import dates_between, parse_extensions, parse_tracked_apps
+from parsing import dates_between, parse_extensions, parse_tracked_apps
 from input_activity import InputActivityCounter
 from models import FileEvent, GeneratedReports, LogEvent
 from report import ReportGenerator, write_reports

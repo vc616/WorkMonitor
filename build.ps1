@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $ProjectDir "venv\Scripts\python.exe"
+# PyInstaller writes dist/ and build/ relative to the current directory.
+Set-Location -LiteralPath $ProjectDir
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Virtual environment not found: $Python. Create venv and install build dependencies first."
@@ -22,7 +24,13 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $TclSource "tk8.6") -Destinati
 $env:TCL_LIBRARY = Join-Path $BundledTcl "tcl8.6"
 $env:TK_LIBRARY = Join-Path $BundledTcl "tk8.6"
 
-& $Python (Join-Path $ProjectDir "tools\generate_icon.py")
-& $Python -m PyInstaller --noconfirm --clean (Join-Path $ProjectDir "WorkMonitorV2.spec")
+$IconPath = Join-Path $ProjectDir "assets\work_monitor.ico"
+if (-not (Test-Path -LiteralPath $IconPath)) {
+    & $Python (Join-Path $ProjectDir "tools\generate_icon.py")
+}
+& $Python -m PyInstaller --noconfirm --clean `
+    --distpath (Join-Path $ProjectDir "dist") `
+    --workpath (Join-Path $ProjectDir "build") `
+    (Join-Path $ProjectDir "WorkMonitorV2.spec")
 
 Write-Host "Build complete: $ProjectDir\dist\WorkMonitorV2.exe"

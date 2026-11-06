@@ -18,15 +18,30 @@ def build_startup_command(app_dir: Path) -> str:
     return subprocess.list2cmdline([str(interpreter), str((app_dir / "main.py").resolve())])
 
 
-def is_startup_enabled() -> bool:
+def read_startup_command() -> str | None:
+    """Return the registered command, or None when the value does not exist."""
     try:
         import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_PATH) as key:
-            winreg.QueryValueEx(key, STARTUP_VALUE_NAME)
-        return True
+            value, _ = winreg.QueryValueEx(key, STARTUP_VALUE_NAME)
+        return str(value)
     except (FileNotFoundError, OSError, ImportError):
+        return None
+
+
+def is_startup_enabled(app_dir: Path | None = None) -> bool:
+    """Report enabled only when the registered command still points here.
+
+    Passing ``app_dir`` detects a stale entry left behind after the program
+    was moved or switched between the source and EXE variants.
+    """
+    command = read_startup_command()
+    if command is None:
         return False
+    if app_dir is None:
+        return True
+    return command == build_startup_command(app_dir)
 
 
 def set_startup_enabled(enabled: bool, app_dir: Path) -> None:

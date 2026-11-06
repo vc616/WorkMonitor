@@ -1,6 +1,6 @@
-psutil>=5.9
-watchdog>=4.0
-Pillow>=10.0
-pystray>=0.19
-pynput>=1.7
-pywin32>=306; sys_platform == "win32"
+psutil>=5.9,<8
+watchdog>=4.0,<7
+Pillow>=10.0,<13
+pystray>=0.19,<1
+pynput>=1.7,<3
+pywin32>=306,<400; sys_platform == "win32"

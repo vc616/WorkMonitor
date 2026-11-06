@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-import re
+import queue
+import threading
 import tkinter as tk
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -9,8 +10,15 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any
 
-from config import DEFAULT_TRACKED_APPS, ConfigError, read_config_data, save_config_updates
+from config import (
+    DEFAULT_KNOWN_EDITORS,
+    DEFAULT_TRACKED_APPS,
+    ConfigError,
+    read_config_data,
+    save_config_updates,
+)
 from models import GeneratedReports
+from parsing import dates_between, parse_extensions, parse_tracked_apps
 from report import write_reports
 from startup import is_startup_enabled, set_startup_enabled
 from tray import TrayController
@@ -33,37 +41,7 @@ EMPTY_TEXT = "#a2a9b1"
 SELECTED_BG = ACCENT_COLOR
 SELECTED_TEXT = "#ffffff"
 
-
-def dates_between(start: date, end: date, available: set[date]) -> set[date]:
-    if end < start:
-        start, end = end, start
-    count = (end - start).days + 1
-    return {start + timedelta(days=index) for index in range(count) if start + timedelta(days=index) in available}
-
-
-def parse_extensions(value: str) -> list[str]:
-    extensions: list[str] = []
-    for item in re.split(r"[,;\s]+", value):
-        item = item.strip().lower()
-        if not item:
-            continue
-        extensions.append(item if item.startswith(".") else f".{item}")
-    return list(dict.fromkeys(extensions))
-
-
-def parse_tracked_apps(value: str) -> dict[str, str]:
-    applications: dict[str, str] = {}
-    for line_number, raw_line in enumerate(value.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise ValueError(f"应用映射第 {line_number} 行缺少 =")
-        process, display_name = (part.strip() for part in line.split("=", 1))
-        if not process or not display_name:
-            raise ValueError(f"应用映射第 {line_number} 行不完整")
-        applications[process] = display_name
-    return applications
+__all__ = ["MonitorGui", "dates_between", "parse_extensions", "parse_tracked_apps"]
 
 
 class MonitorGui:
@@ -88,6 +66,9 @@ class MonitorGui:
         self._hover_day: date | None = None
         self._settings_vars: dict[str, tk.StringVar] = {}
         self._settings_texts: dict[str, tk.Text] = {}
+        self._report_results: queue.Queue[tuple[list[Path], int, BaseException | None]] = queue.Queue()
+        self._reporting = False
+        self._close_hint_shown = False
         today = date.today()
         self._display_month = date(today.year, today.month, 1)
 
@@ -102,7 +83,7 @@ class MonitorGui:
         self.root.geometry("900x760")
         self.root.minsize(780, 660)
         self.root.configure(bg=WINDOW_BG)
-        self.root.protocol("WM_DELETE_WINDOW", self.root.withdraw)
+        self.root.protocol("WM_DELETE_WINDOW", self._hide_window)
         self._configure_style()
         self._build_layout()
         self._tray = TrayController(self.show, self.request_shutdown)
@@ -113,6 +94,7 @@ class MonitorGui:
     def run(self) -> None:
         if not self._tray.start():
             self._show_now()
+        self.root.after(150, self._poll_report_results)
         self.root.mainloop()
 
     def show(self) -> None:
@@ -276,13 +258,14 @@ class MonitorGui:
         self._add_entry_field(database_group, "批量写入条数", "database_batch_size")
         self._add_entry_field(database_group, "批量刷新间隔（秒）", "database_flush_seconds")
         self._add_entry_field(database_group, "文件事件防抖（秒）", "debounce_seconds")
-        self._add_entry_field(database_group, "Everything DLL（兼容项）", "everything_dll_path")
+        self._add_entry_field(database_group, "事件队列上限", "queue_max_size")
 
         foreground_group = self._settings_group(content, "浏览器与常用应用")
         self._add_entry_field(foreground_group, "前台检测间隔（秒）", "browser_poll_seconds")
         self._add_entry_field(foreground_group, "网页最短记录（秒）", "browser_minimum_seconds")
         self._add_entry_field(foreground_group, "应用最短记录（秒）", "application_minimum_seconds")
         self._add_text_field(foreground_group, "应用进程映射", "tracked_apps", 9)
+        self._add_text_field(foreground_group, "可识别编辑器进程（每行一个）", "known_editors", 5)
 
         system_group = self._settings_group(content, "系统")
         ttk.Checkbutton(
@@ -295,6 +278,12 @@ class MonitorGui:
             system_group,
             text="启动后默认静默运行，可从系统托盘图标打开窗口。",
             style="Muted.TLabel",
+        ).pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            system_group,
+            text="关闭窗口只会隐藏到托盘，监控仍在运行；请从托盘菜单选择「退出程序」完全退出。",
+            style="Muted.TLabel",
+            wraplength=560,
         ).pack(anchor="w", pady=(5, 0))
 
         save_bar = ttk.Frame(content, style="Panel.TFrame")
@@ -348,6 +337,9 @@ class MonitorGui:
                     f"{process} = {display_name}"
                     for process, display_name in data.get("tracked_apps", DEFAULT_TRACKED_APPS).items()
                 ),
+                "known_editors": "\n".join(
+                    str(item) for item in data.get("known_editors", DEFAULT_KNOWN_EDITORS)
+                ),
             }
             for key, value in text_values.items():
                 widget = self._settings_texts[key]
@@ -360,14 +352,14 @@ class MonitorGui:
                 "database_batch_size": data.get("database_batch_size", 100),
                 "database_flush_seconds": data.get("database_flush_seconds", 0.5),
                 "debounce_seconds": data.get("debounce_seconds", 1.0),
-                "everything_dll_path": data.get("everything_dll_path", ""),
+                "queue_max_size": data.get("queue_max_size", 10000),
                 "browser_poll_seconds": data.get("browser_poll_seconds", 1.0),
                 "browser_minimum_seconds": data.get("browser_minimum_seconds", 3.0),
                 "application_minimum_seconds": data.get("application_minimum_seconds", 3.0),
             }
             for key, value in values.items():
                 self._settings_vars[key].set(str(value))
-            self._startup_var.set(is_startup_enabled())
+            self._startup_var.set(is_startup_enabled(self._config_path.parent))
             self._input_activity_var.set(bool(data.get("input_activity_enabled", True)))
             self._settings_status.configure(text="配置已载入")
         except Exception:
@@ -403,14 +395,15 @@ class MonitorGui:
             "exclude_patterns": lines("exclude_patterns"),
             "target_extensions": extensions,
             "db_path": db_path,
-            "everything_dll_path": self._settings_vars["everything_dll_path"].get().strip(),
             "database_batch_size": number("database_batch_size", 1, integer=True),
             "database_flush_seconds": number("database_flush_seconds", 0.05),
             "debounce_seconds": number("debounce_seconds", 0.1),
+            "queue_max_size": number("queue_max_size", 100, integer=True),
             "browser_poll_seconds": number("browser_poll_seconds", 0.1),
             "browser_minimum_seconds": number("browser_minimum_seconds", 0.0),
             "application_minimum_seconds": number("application_minimum_seconds", 0.0),
             "tracked_apps": parse_tracked_apps(self._settings_texts["tracked_apps"].get("1.0", "end")),
+            "known_editors": lines("known_editors"),
             "input_activity_enabled": self._input_activity_var.get(),
         }
 
@@ -418,14 +411,28 @@ class MonitorGui:
         try:
             updates = self._collect_settings()
             save_config_updates(updates, self._config_path)
-            set_startup_enabled(self._startup_var.get(), self._config_path.parent)
         except (ValueError, ConfigError) as exc:
             messagebox.showerror("设置无效", str(exc), parent=self.root)
             return
         except Exception:
-            LOGGER.exception("保存设置失败")
-            messagebox.showerror("保存失败", "无法保存设置，请查看运行日志。", parent=self.root)
+            LOGGER.exception("保存配置失败")
+            messagebox.showerror("保存失败", "无法保存 config.json，请查看运行日志。", parent=self.root)
             return
+
+        # Config and the registry cannot be updated atomically; report each
+        # result separately so a registry failure does not look like a lost save.
+        try:
+            set_startup_enabled(self._startup_var.get(), self._config_path.parent)
+        except Exception as exc:
+            LOGGER.exception("更新开机启动项失败")
+            self._settings_status.configure(text="参数已保存，开机启动设置失败")
+            messagebox.showwarning(
+                "设置部分保存",
+                f"参数已写入 config.json，但开机启动设置失败：{exc}",
+                parent=self.root,
+            )
+            return
+
         self._settings_status.configure(text="已保存，监控参数重启后生效")
         messagebox.showinfo(
             "设置已保存",
@@ -553,45 +560,101 @@ class MonitorGui:
     def _update_selection_ui(self) -> None:
         count = len(self._selected_days)
         self._selection_label.configure(text="未选择日期" if count == 0 else f"已选择 {count} 天 · 灰色日期会自动跳过")
-        self._generate_button.configure(state="disabled" if count == 0 else "normal")
+        enabled = count > 0 and not self._reporting
+        self._generate_button.configure(state="normal" if enabled else "disabled")
 
     def _make_reports(self) -> None:
         selected_days = sorted(self._selected_days)
-        if not selected_days:
+        if not selected_days or self._reporting:
             return
+        self._reporting = True
+        self._generate_button.configure(state="disabled")
+        self._status_label.configure(text=f"正在生成 {len(selected_days)} 天日报…")
+        worker = threading.Thread(
+            target=self._generate_worker,
+            args=(selected_days,),
+            name="report-worker",
+            daemon=True,
+        )
+        worker.start()
+
+    def _generate_worker(self, selected_days: list[date]) -> None:
+        """Runs off the UI thread; the result is handed back through a queue."""
         output_paths: list[Path] = []
         skipped = 0
+        error: BaseException | None = None
         try:
-            self._generate_button.configure(state="disabled")
             for day in selected_days:
                 reports = self._generate_report(day)
                 if reports is None:
                     skipped += 1
                     continue
                 output_paths.extend(write_reports(self._output_dir, day, reports))
-        except Exception:
+        except BaseException as exc:  # noqa: BLE001 - reported to the UI
             LOGGER.exception("批量生成日报失败")
+            error = exc
+        self._report_results.put((output_paths, skipped, error))
+
+    def _poll_report_results(self) -> None:
+        try:
+            while True:
+                output_paths, skipped, error = self._report_results.get_nowait()
+                self._report_finished(output_paths, skipped, error)
+        except queue.Empty:
+            pass
+        try:
+            if self.root.winfo_exists():
+                self.root.after(150, self._poll_report_results)
+        except tk.TclError:
+            LOGGER.debug("窗口已关闭，停止轮询日报结果", exc_info=True)
+
+    def _report_finished(
+        self,
+        output_paths: list[Path],
+        skipped: int,
+        error: BaseException | None,
+    ) -> None:
+        self._reporting = False
+        self._update_selection_ui()
+        if error is not None:
+            self._status_label.configure(text="日报生成失败")
             messagebox.showerror("生成失败", "日报生成失败，请查看日志。", parent=self.root)
-        else:
-            if not output_paths:
-                messagebox.showinfo("无数据", "选中的日期没有可生成的记录。", parent=self.root)
-            else:
-                self._status_label.configure(text=f"已生成 {len(output_paths) // 2} 天日报")
-                detail = "\n".join(str(path) for path in output_paths[:8])
-                if len(output_paths) > 8:
-                    detail += "\n…"
-                suffix = f"\n跳过无数据日期：{skipped} 天" if skipped else ""
-                messagebox.showinfo("生成完成", f"已生成 {len(output_paths) // 2} 天日报。{suffix}\n\n{detail}", parent=self.root)
-        finally:
-            self._update_selection_ui()
+            return
+        if not output_paths:
+            messagebox.showinfo("无数据", "选中的日期没有可生成的记录。", parent=self.root)
+            return
+        self._status_label.configure(text=f"已生成 {len(output_paths) // 2} 天日报")
+        detail = "\n".join(str(path) for path in output_paths[:8])
+        if len(output_paths) > 8:
+            detail += "\n…"
+        suffix = f"\n跳过无数据日期：{skipped} 天" if skipped else ""
+        messagebox.showinfo(
+            "生成完成",
+            f"已生成 {len(output_paths) // 2} 天日报。{suffix}\n\n{detail}",
+            parent=self.root,
+        )
 
     def _show_now(self) -> None:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
 
+    def _hide_window(self) -> None:
+        if not self._close_hint_shown:
+            self._close_hint_shown = True
+            messagebox.showinfo(
+                "已最小化到托盘",
+                "窗口已隐藏，但监控仍在后台运行。\n如需完全退出，请从系统托盘菜单选择「退出程序」。",
+                parent=self.root,
+            )
+        self.root.withdraw()
+
     def _shutdown(self) -> None:
-        self._tray.stop()
+        # A failing tray icon must never prevent the monitors from stopping.
+        try:
+            self._tray.stop()
+        except Exception:
+            LOGGER.exception("停止系统托盘失败")
         try:
             self._shutdown_callback()
         finally:

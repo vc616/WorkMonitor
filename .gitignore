@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv-dev/
 venv/
 env/
 ENV/
@@ -52,7 +53,7 @@ Desktop.ini
 .env.*
 !.env.example
 
-# WorkMonitor runtime data
+# WorkMonitor runtime data (contains plaintext activity records)
 /LogFile/
 /work_log.db
 /work_log.db-*
@@ -63,3 +64,9 @@ Desktop.ini
 *.sqlite3-journal
 *.log
 /config.json.tmp
+
+# Local scratch and tooling
+debug.log
+tcl_probe/
+.agents/
+.workbuddy-ai/

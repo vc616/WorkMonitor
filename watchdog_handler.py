@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from models import FileEvent
 
 LOGGER = logging.getLogger(__name__)
 
+DROP_WARNING_INTERVAL = 100
+
 
 class QueueingEventHandler(FileSystemEventHandler):
     """Converts Watchdog callbacks to immutable queue messages only."""
@@ -28,6 +31,8 @@ class QueueingEventHandler(FileSystemEventHandler):
     def __init__(self, event_queue: queue.Queue[FileEvent]):
         super().__init__()
         self._event_queue = event_queue
+        self._dropped = 0
+        self._lock = threading.Lock()
 
     def on_created(self, event: FileSystemEvent) -> None:
         self._enqueue(FileEventType.CREATED, event)
@@ -39,7 +44,7 @@ class QueueingEventHandler(FileSystemEventHandler):
         self._enqueue(FileEventType.DELETED, event)
 
     def on_moved(self, event: FileSystemMovedEvent) -> None:
-        self._event_queue.put_nowait(
+        self._put(
             FileEvent(
                 event_type=FileEventType.MOVED,
                 path=Path(event.src_path),
@@ -52,7 +57,7 @@ class QueueingEventHandler(FileSystemEventHandler):
     def _enqueue(self, event_type: FileEventType, event: FileSystemEvent) -> None:
         if event.is_directory and event_type is not FileEventType.DELETED:
             return
-        self._event_queue.put_nowait(
+        self._put(
             FileEvent(
                 event_type=event_type,
                 path=Path(event.src_path),
@@ -60,6 +65,17 @@ class QueueingEventHandler(FileSystemEventHandler):
                 is_directory=event.is_directory,
             )
         )
+
+    def _put(self, event: FileEvent) -> None:
+        """Apply back pressure without ever raising inside a watchdog callback."""
+        try:
+            self._event_queue.put_nowait(event)
+        except queue.Full:
+            with self._lock:
+                self._dropped += 1
+                dropped = self._dropped
+            if dropped % DROP_WARNING_INTERVAL == 1:
+                LOGGER.warning("文件事件队列已满，累计丢弃 %d 个事件", dropped)
 
 
 class FileSystemMonitor:

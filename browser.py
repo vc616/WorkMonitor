@@ -4,8 +4,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time as datetime_time, timedelta
 
 try:
     import psutil
@@ -17,8 +16,37 @@ from models import LogEvent
 
 LOGGER = logging.getLogger(__name__)
 
-BROWSERS = frozenset({"msedge.exe", "chrome.exe", "firefox.exe", "360se.exe", "brave.exe"})
-NEW_TAB_TITLES = ("new tab", "新标签页", "新分頁", "新しいタブ")
+BROWSERS = frozenset(
+    {
+        "msedge.exe",
+        "chrome.exe",
+        "firefox.exe",
+        "brave.exe",
+        "opera.exe",
+        "vivaldi.exe",
+        "arc.exe",
+        "360se.exe",
+        "360chrome.exe",
+        "qqbrowser.exe",
+        "sogouexplorer.exe",
+        "2345explorer.exe",
+        "liebao.exe",
+    }
+)
+NEW_TAB_TITLES = frozenset(
+    {
+        "new tab",
+        "newtab",
+        "about:blank",
+        "about:newtab",
+        "新标签页",
+        "新建标签页",
+        "新分頁",
+        "新增分頁",
+        "新しいタブ",
+        "새 탭",
+    }
+)
 
 
 def get_active_window_info() -> tuple[str | None, str | None]:
@@ -40,14 +68,96 @@ def get_active_window_info() -> tuple[str | None, str | None]:
         return None, None
 
 
-@dataclass(slots=True)
-class PageTracker:
-    minimum_seconds: float
-    browser: str | None = None
-    title: str | None = None
-    accumulated: float = 0.0
-    last_check: float | None = None
+class SessionTracker:
+    """Shared duration accounting for a foreground session.
 
+    Elapsed time always comes from ``time.monotonic()``. Wall-clock values are
+    used only to attribute the elapsed interval to the calendar day it belongs
+    to, so a session crossing midnight is stored as one event per day, each
+    stamped with its own start time instead of the session's end time.
+    """
+
+    def __init__(self, minimum_seconds: float):
+        self.minimum_seconds = minimum_seconds
+        self._key: tuple | None = None
+        self._started_at: datetime | None = None
+        self._last_check: float | None = None
+        self._day_seconds: dict[date, float] = {}
+        self._pending: list[LogEvent] = []
+
+    def drain_events(self) -> list[LogEvent]:
+        """Return events settled earlier than the one returned by ``flush``."""
+        events = self._pending
+        self._pending = []
+        return events
+
+    def _advance(
+        self,
+        key: tuple | None,
+        active: bool,
+        monotonic_now: float,
+        timestamp: datetime,
+    ) -> LogEvent | None:
+        if key == self._key and active and self._key is not None:
+            self._accumulate(monotonic_now, timestamp)
+            return None
+        event = self.flush(monotonic_now, timestamp)
+        if active:
+            self._key = key
+            self._started_at = timestamp
+            self._last_check = monotonic_now
+            self._day_seconds = {}
+        return event
+
+    def flush(self, monotonic_now: float, timestamp: datetime) -> LogEvent | None:
+        self._accumulate(monotonic_now, timestamp)
+        events: list[LogEvent] = []
+        started_at = self._started_at or timestamp
+        if self._key is not None and sum(self._day_seconds.values()) >= self.minimum_seconds:
+            for day in sorted(self._day_seconds):
+                seconds = int(round(self._day_seconds[day]))
+                if seconds <= 0:
+                    continue
+                event_time = (
+                    started_at
+                    if day == started_at.date()
+                    else datetime.combine(day, datetime_time.min)
+                )
+                events.append(self._make_event(event_time, seconds))
+        self._key = None
+        self._started_at = None
+        self._last_check = None
+        self._day_seconds = {}
+        # Keep ``flush`` returning a single event for existing callers; split
+        # sessions expose the remaining days through ``drain_events``.
+        self._pending.extend(events[:-1])
+        return events[-1] if events else None
+
+    def _accumulate(self, monotonic_now: float, timestamp: datetime) -> None:
+        if self._last_check is None:
+            self._last_check = monotonic_now
+            return
+        elapsed = max(0.0, monotonic_now - self._last_check)
+        self._last_check = monotonic_now
+        if elapsed <= 0 or self._key is None:
+            return
+        segment_start = timestamp - timedelta(seconds=elapsed)
+        if segment_start.date() == timestamp.date():
+            self._day_seconds[timestamp.date()] = self._day_seconds.get(timestamp.date(), 0.0) + elapsed
+            return
+        boundary = datetime.combine(timestamp.date(), datetime_time.min)
+        before = max(0.0, (boundary - segment_start).total_seconds())
+        after = max(0.0, (timestamp - boundary).total_seconds())
+        if before:
+            self._day_seconds[segment_start.date()] = self._day_seconds.get(segment_start.date(), 0.0) + before
+        if after:
+            self._day_seconds[timestamp.date()] = self._day_seconds.get(timestamp.date(), 0.0) + after
+
+    def _make_event(self, event_time: datetime, seconds: int) -> LogEvent:
+        raise NotImplementedError
+
+
+class PageTracker(SessionTracker):
     def update(
         self,
         browser: str | None,
@@ -55,61 +165,32 @@ class PageTracker:
         monotonic_now: float,
         timestamp: datetime,
     ) -> LogEvent | None:
-        active = browser in BROWSERS and bool(title) and not self._is_new_tab(title or "")
-        page = (browser, title) if active else (None, None)
-        current = (self.browser, self.title)
+        cleaned_title = title.strip() if title else ""
+        active = browser in BROWSERS and bool(cleaned_title) and not self._is_new_tab(cleaned_title)
+        key = (browser, cleaned_title) if active else None
+        return self._advance(key, active, monotonic_now, timestamp)
 
-        if page == current and active:
-            self._accumulate(monotonic_now)
-            return None
-
-        event = self.flush(monotonic_now, timestamp)
-        if active:
-            self.browser = browser
-            self.title = title
-            self.last_check = monotonic_now
-        return event
-
-    def flush(self, monotonic_now: float, timestamp: datetime) -> LogEvent | None:
-        self._accumulate(monotonic_now)
-        event: LogEvent | None = None
-        if self.browser and self.title and self.accumulated >= self.minimum_seconds:
-            event = LogEvent(
-                timestamp=timestamp,
-                action=WorkAction.BROWSE_PAGE.value,
-                file_name=self.title,
-                file_path="",
-                file_size=round(self.accumulated),
-                project_dir=self.browser,
-            )
-        self.browser = None
-        self.title = None
-        self.accumulated = 0.0
-        self.last_check = None
-        return event
-
-    def _accumulate(self, monotonic_now: float) -> None:
-        if self.last_check is not None:
-            self.accumulated += max(0.0, monotonic_now - self.last_check)
-            self.last_check = monotonic_now
+    def _make_event(self, event_time: datetime, seconds: int) -> LogEvent:
+        browser, title = self._key  # type: ignore[misc]
+        return LogEvent(
+            timestamp=event_time,
+            action=WorkAction.BROWSE_PAGE.value,
+            file_name=title,
+            file_path="",
+            file_size=seconds,
+            project_dir=browser,
+        )
 
     @staticmethod
     def _is_new_tab(title: str) -> bool:
-        lowered = title.lower()
-        return any(marker in lowered for marker in NEW_TAB_TITLES)
+        normalized = " ".join(title.split()).lower()
+        return normalized in NEW_TAB_TITLES
 
 
-@dataclass(slots=True)
-class ApplicationTracker:
-    tracked_apps: dict[str, str]
-    minimum_seconds: float
-    process_name: str | None = None
-    application_name: str | None = None
-    accumulated: float = 0.0
-    last_check: float | None = None
-
-    def __post_init__(self) -> None:
-        self.tracked_apps = {process.lower(): name for process, name in self.tracked_apps.items()}
+class ApplicationTracker(SessionTracker):
+    def __init__(self, tracked_apps: dict[str, str], minimum_seconds: float):
+        super().__init__(minimum_seconds)
+        self.tracked_apps = {process.lower(): name for process, name in tracked_apps.items()}
 
     def update(
         self,
@@ -119,41 +200,20 @@ class ApplicationTracker:
     ) -> LogEvent | None:
         normalized = process_name.lower() if process_name else None
         application = self.tracked_apps.get(normalized or "")
-        active_process = normalized if application else None
+        active = application is not None
+        key = (normalized, application) if active else None
+        return self._advance(key, active, monotonic_now, timestamp)
 
-        if active_process == self.process_name and application is not None:
-            self._accumulate(monotonic_now)
-            return None
-
-        event = self.flush(monotonic_now, timestamp)
-        if application is not None:
-            self.process_name = active_process
-            self.application_name = application
-            self.last_check = monotonic_now
-        return event
-
-    def flush(self, monotonic_now: float, timestamp: datetime) -> LogEvent | None:
-        self._accumulate(monotonic_now)
-        event: LogEvent | None = None
-        if self.process_name and self.application_name and self.accumulated >= self.minimum_seconds:
-            event = LogEvent(
-                timestamp=timestamp,
-                action=WorkAction.USE_APPLICATION.value,
-                file_name=self.application_name,
-                file_path="",
-                file_size=round(self.accumulated),
-                project_dir=self.process_name,
-            )
-        self.process_name = None
-        self.application_name = None
-        self.accumulated = 0.0
-        self.last_check = None
-        return event
-
-    def _accumulate(self, monotonic_now: float) -> None:
-        if self.last_check is not None:
-            self.accumulated += max(0.0, monotonic_now - self.last_check)
-            self.last_check = monotonic_now
+    def _make_event(self, event_time: datetime, seconds: int) -> LogEvent:
+        process_name, application_name = self._key  # type: ignore[misc]
+        return LogEvent(
+            timestamp=event_time,
+            action=WorkAction.USE_APPLICATION.value,
+            file_name=application_name,
+            file_path="",
+            file_size=seconds,
+            project_dir=process_name,
+        )
 
 
 class BrowserMonitor(threading.Thread):
@@ -197,29 +257,26 @@ class BrowserMonitor(threading.Thread):
             timestamp = datetime.now()
             page_event = self._tracker.update(browser, title, monotonic_now, timestamp)
             application_event = self._application_tracker.update(browser, monotonic_now, timestamp)
-            for event in (page_event, application_event):
-                if event is not None:
-                    self._emit(event)
+            self._settle(page_event, application_event)
             self._stop_event.wait(self._poll_seconds)
 
         monotonic_now = time.monotonic()
         timestamp = datetime.now()
-        for event in (
+        self._settle(
             self._tracker.flush(monotonic_now, timestamp),
             self._application_tracker.flush(monotonic_now, timestamp),
-        ):
+        )
+        LOGGER.info("前台窗口监控已停止")
+
+    def _settle(self, *events: LogEvent | None) -> None:
+        for tracker in (self._tracker, self._application_tracker):
+            for event in tracker.drain_events():
+                self._emit(event)
+        for event in events:
             if event is not None:
                 self._emit(event)
-        LOGGER.info("前台窗口监控已停止")
 
     def _emit(self, event: LogEvent) -> None:
         self._submit_log(event)
-        if event.action == WorkAction.USE_APPLICATION.value:
-            LOGGER.info("应用 | %s | 进程: %s | 前台: %d 秒", event.file_name, event.project_dir, event.file_size)
-        else:
-            LOGGER.info(
-                "网页 | %s | 浏览器: %s | 停留: %d 秒",
-                event.file_name,
-                event.project_dir,
-                event.file_size,
-            )
+        # Titles and application names are sensitive; keep them out of app.log.
+        LOGGER.debug("前台会话已记录 | %s | %d 秒", event.action, event.file_size)

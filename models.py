@@ -26,14 +26,9 @@ class LogEvent:
     project_dir: str
 
 
-@dataclass(frozen=True, slots=True)
-class WorkLogRecord:
-    timestamp: datetime
-    action: str
-    file_name: str
-    file_path: str
-    file_size: int
-    project_dir: str
+# A row read back from SQLite has exactly the same shape as a row being
+# submitted. Keep the second name as a semantic alias for report/query code.
+WorkLogRecord = LogEvent
 
 
 @dataclass(slots=True)
@@ -42,12 +37,6 @@ class FileState:
     initial_size: int
     last_size: int
     modified: int = 0
-
-
-@dataclass(slots=True)
-class DebounceState:
-    last_event_time: datetime
-    last_action: str
 
 
 @dataclass(frozen=True, slots=True)

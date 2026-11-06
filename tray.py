@@ -56,8 +56,14 @@ class TrayController:
             self._icon.run()
         except Exception:
             LOGGER.exception("系统托盘运行失败，正在显示主窗口")
-            self._show_window()
+            try:
+                self._show_window()
+            except Exception:
+                LOGGER.exception("回退显示主窗口失败")
 
     def stop(self) -> None:
         if self._icon is not None:
-            self._icon.stop()
+            try:
+                self._icon.stop()
+            except Exception:
+                LOGGER.exception("停止系统托盘图标失败")

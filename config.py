@@ -23,6 +23,15 @@ DEFAULT_TRACKED_APPS = {
     "telegram.exe": "Telegram",
 }
 
+DEFAULT_KNOWN_EDITORS = (
+    "acad", "acadlt", "excel", "winword", "powerpnt", "msaccess", "visio",
+    "wps", "et", "wpp", "foxitpdfeditor", "foxitreader", "acrord32", "acrord64",
+    "code", "cursor", "pycharm64", "idea64", "devenv", "notepad++", "notepad",
+    "sublime_text", "gvim", "vim", "atom", "zed", "typora", "wordpad",
+)
+
+DEFAULT_QUEUE_MAX_SIZE = 10_000
+
 
 class ConfigError(ValueError):
     pass
@@ -44,6 +53,8 @@ class AppConfig:
     tracked_apps: tuple[tuple[str, str], ...] = tuple(DEFAULT_TRACKED_APPS.items())
     application_minimum_seconds: float = 3.0
     input_activity_enabled: bool = True
+    queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
+    known_editors: frozenset[str] = frozenset(DEFAULT_KNOWN_EDITORS)
 
 
 def ensure_user_config(
@@ -109,18 +120,38 @@ def save_config_updates(updates: dict[str, Any], path: Path | None = None) -> Ap
         raise
 
 
-def load_config(path: Path | None = None) -> AppConfig:
-    app_dir = get_app_dir()
-    _, raw = read_config_data(path)
+def _string_list(raw: dict[str, Any], key: str, required: bool = False) -> list[str]:
+    """Reject scalars: a bare string would otherwise be iterated character by character."""
+    if key not in raw:
+        if required:
+            raise ConfigError(f"配置缺少字段: {key}")
+        return []
+    value = raw[key]
+    if not isinstance(value, (list, tuple)):
+        raise ConfigError(f"{key} 必须是字符串数组，当前为 {type(value).__name__}")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigError(f"{key} 中的每一项都必须是非空字符串")
+        items.append(item.strip())
+    return items
 
-    required = ("watch_dirs", "target_extensions", "db_path")
-    missing = [key for key in required if key not in raw]
-    if missing:
-        raise ConfigError(f"配置缺少字段: {', '.join(missing)}")
+
+def load_config(path: Path | None = None) -> AppConfig:
+    config_path, raw = read_config_data(path)
+    # Relative paths always resolve against the directory holding the config file.
+    app_dir = config_path.parent
+
+    watch_dirs = _string_list(raw, "watch_dirs", required=True)
+    if not watch_dirs:
+        raise ConfigError("watch_dirs 不能为空")
+    raw_extensions = _string_list(raw, "target_extensions", required=True)
+    if not isinstance(raw.get("db_path"), str) or not raw["db_path"].strip():
+        raise ConfigError("db_path 必须是非空字符串")
 
     extensions = frozenset(
-        extension.lower() if str(extension).startswith(".") else f".{str(extension).lower()}"
-        for extension in raw["target_extensions"]
+        extension.lower() if extension.startswith(".") else f".{extension.lower()}"
+        for extension in raw_extensions
     )
     if not extensions:
         raise ConfigError("target_extensions 不能为空")
@@ -132,6 +163,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         poll_seconds = max(0.1, float(raw.get("browser_poll_seconds", 1.0)))
         minimum_seconds = max(0.0, float(raw.get("browser_minimum_seconds", 3.0)))
         application_minimum_seconds = max(0.0, float(raw.get("application_minimum_seconds", 3.0)))
+        queue_max_size = max(100, int(raw.get("queue_max_size", DEFAULT_QUEUE_MAX_SIZE)))
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"配置中的数值无效: {exc}") from exc
 
@@ -143,17 +175,24 @@ def load_config(path: Path | None = None) -> AppConfig:
         for process, name in tracked_raw.items()
         if str(process).strip() and str(name).strip()
     )
+    editors_raw = raw.get("known_editors", DEFAULT_KNOWN_EDITORS)
+    if not isinstance(editors_raw, (list, tuple)):
+        raise ConfigError("known_editors 必须是进程名数组")
+    known_editors = frozenset(
+        Path(str(process).strip().lower()).stem for process in editors_raw if str(process).strip()
+    ) or frozenset(DEFAULT_KNOWN_EDITORS)
+
     input_activity_enabled = raw.get("input_activity_enabled", True)
     if not isinstance(input_activity_enabled, bool):
         raise ConfigError("input_activity_enabled 必须是布尔值")
 
     return AppConfig(
         app_dir=app_dir,
-        watch_dirs=tuple(_resolve_path(str(item), app_dir) for item in raw["watch_dirs"]),
-        exclude_dirs=tuple(_resolve_path(str(item), app_dir) for item in raw.get("exclude_dirs", [])),
-        exclude_patterns=tuple(str(item) for item in raw.get("exclude_patterns", [])),
+        watch_dirs=tuple(_resolve_path(item, app_dir) for item in watch_dirs),
+        exclude_dirs=tuple(_resolve_path(item, app_dir) for item in _string_list(raw, "exclude_dirs")),
+        exclude_patterns=tuple(_string_list(raw, "exclude_patterns")),
         target_extensions=extensions,
-        db_path=_resolve_path(str(raw["db_path"]), app_dir),
+        db_path=_resolve_path(raw["db_path"].strip(), app_dir),
         debounce_seconds=debounce_seconds,
         browser_poll_seconds=poll_seconds,
         browser_minimum_seconds=minimum_seconds,
@@ -162,4 +201,6 @@ def load_config(path: Path | None = None) -> AppConfig:
         tracked_apps=tracked_apps,
         application_minimum_seconds=application_minimum_seconds,
         input_activity_enabled=input_activity_enabled,
+        queue_max_size=queue_max_size,
+        known_editors=known_editors,
     )
