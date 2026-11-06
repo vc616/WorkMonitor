@@ -560,7 +560,7 @@ class EventProcessor(threading.Thread):
         candidates: list[tuple[str, ...]],
         segments: tuple[str, ...],
     ) -> bool:
-        if rule.basename_only and not rule.directory:
+        if rule.basename_only and not rule.directory and not rule.anchored:
             # `*.tmp` has no separator, so it matches the file name at any depth.
             return rule.regex.fullmatch(segments[-1]) is not None
 
@@ -575,9 +575,12 @@ class EventProcessor(threading.Thread):
             for depth in range(1, len(candidate)):
                 if rule.regex.fullmatch("/".join(candidate[:depth])):
                     return True
-            if rule.basename_only and any(rule.regex.fullmatch(part) for part in candidate[:-1]):
+            if rule.basename_only and not rule.anchored and any(
+                rule.regex.fullmatch(part) for part in candidate[:-1]
+            ):
                 # `build/` matches a directory with that name at any depth.
                 # The last segment may be a plain file, so it is not compared.
+                # An anchored `/build/` must NOT match at arbitrary depth.
                 return True
         return False
 

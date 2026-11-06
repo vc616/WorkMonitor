@@ -73,9 +73,26 @@ def _install_tkinter_stub() -> None:
     sys.modules["tkinter.ttk"] = stub
 
 
-_install_tkinter_stub()
+MonitorGui = None
+_saved_modules: dict[str, object] = {}
 
-from gui import MonitorGui  # noqa: E402  (import after the stub is in place)
+
+def setUpModule() -> None:
+    """Install the stub only for this module, then restore the real modules."""
+    global MonitorGui, _saved_modules
+    _saved_modules = {name: sys.modules.get(name) for name in ("tkinter", "tkinter.ttk")}
+    _install_tkinter_stub()
+    from gui import MonitorGui as _MonitorGui
+
+    MonitorGui = _MonitorGui
+
+
+def tearDownModule() -> None:
+    for name, module in _saved_modules.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 class GuiSmokeTests(unittest.TestCase):

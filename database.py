@@ -106,6 +106,7 @@ class DatabaseWriter(threading.Thread):
         self._startup_error: BaseException | None = None
         self._stopped = threading.Event()
         self._accepting = threading.Event()
+        self._stop_requested = threading.Event()
         self._dropped = 0
         self._write_failures = 0
 
@@ -169,10 +170,13 @@ class DatabaseWriter(threading.Thread):
         if not self.is_alive():
             self._stopped.set()
             return
+        # A full queue must not prevent shutdown: the writer also polls this
+        # flag, so the sentinel is only an optimisation for the common case.
+        self._stop_requested.set()
         try:
-            self._commands.put(_StopRequest(), timeout=timeout)
+            self._commands.put_nowait(_StopRequest())
         except queue.Full:
-            LOGGER.warning("写入队列繁忙，停止信号未能立即送达")
+            LOGGER.warning("写入队列繁忙，改用停止标志通知写入线程")
         self.join(timeout)
         if self.is_alive():
             raise TimeoutError("SQLite Writer 未能按时停止")
@@ -196,12 +200,15 @@ class DatabaseWriter(threading.Thread):
         try:
             while True:
                 remaining = max(0.0, self._flush_seconds - (time.monotonic() - last_flush))
-                try:
-                    command = self._commands.get(timeout=remaining)
-                except queue.Empty:
-                    self._safe_flush(connection, pending)
-                    last_flush = time.monotonic()
-                    continue
+                if self._stop_requested.is_set():
+                    command = _StopRequest()
+                else:
+                    try:
+                        command = self._commands.get(timeout=remaining)
+                    except queue.Empty:
+                        self._safe_flush(connection, pending)
+                        last_flush = time.monotonic()
+                        continue
 
                 if isinstance(command, LogEvent):
                     pending.append(command)

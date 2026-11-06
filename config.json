@@ -1,11 +1,9 @@
 {
     "watch_dirs": [
-        "D:\\"
+        "E:\\"
     ],
     "exclude_dirs": [
-        "D:\\$RECYCLE.BIN",
-        "D:\\System Volume Information",
-        "D:\\venv"
+        "E:\\$RECYCLE.BIN"
     ],
     "exclude_patterns": [
         "# 空行和 # 开头的内容会被忽略",
@@ -16,10 +14,15 @@
         "!D:/保留目录/*.log"
     ],
     "target_extensions": [
-        ".xlsx", ".xls", 
-        ".dwg", ".dxf", 
-        ".docx", ".doc", 
-        ".py", ".md", ".pdf"
+        ".xlsx",
+        ".xls",
+        ".dwg",
+        ".dxf",
+        ".docx",
+        ".doc",
+        ".py",
+        ".md",
+        ".pdf"
     ],
     "db_path": "work_log.db",
     "database_batch_size": 100,
@@ -46,10 +49,26 @@
         "Telegram.exe": "Telegram"
     },
     "known_editors": [
-        "acad.exe", "acadlt.exe", "excel.exe", "winword.exe", "powerpnt.exe",
-        "wps.exe", "et.exe", "wpp.exe", "acrord32.exe", "foxitpdfeditor.exe",
-        "code.exe", "cursor.exe", "pycharm64.exe", "idea64.exe", "devenv.exe",
-        "notepad++.exe", "notepad.exe", "sublime_text.exe", "gvim.exe",
-        "typora.exe", "wordpad.exe"
+        "acad.exe",
+        "acadlt.exe",
+        "excel.exe",
+        "winword.exe",
+        "powerpnt.exe",
+        "wps.exe",
+        "et.exe",
+        "wpp.exe",
+        "acrord32.exe",
+        "foxitpdfeditor.exe",
+        "code.exe",
+        "cursor.exe",
+        "pycharm64.exe",
+        "idea64.exe",
+        "devenv.exe",
+        "notepad++.exe",
+        "notepad.exe",
+        "sublime_text.exe",
+        "gvim.exe",
+        "typora.exe",
+        "wordpad.exe"
     ]
 }
